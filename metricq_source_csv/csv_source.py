@@ -26,31 +26,43 @@
 # NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
+import random
+from typing import Any
 
-import click
-import click_completion  # type: ignore
-import click_log  # type: ignore
 
+import metricq
 from metricq.logging import get_logger
 
-from .example_source import ExampleSource
+from .version import version as client_version
 
-logger = get_logger("ExampleSource")
-
-click_log.basic_config(logger)
-logger.setLevel("INFO")
-logger.handlers[0].formatter = logging.Formatter(
-    fmt="%(asctime)s [%(levelname)-8s] [%(name)-20s] %(message)s"
-)
-
-click_completion.init()
+logger = get_logger()
 
 
-@click.command()
-@click.argument("url")
-@click.option("--token", default="source-example")
-@click_log.simple_verbosity_option(logger)
-def run(url, token):
-    src = ExampleSource(management_url=url, token=token)
-    src.run()
+class CSVSource(metricq.Source):
+    def __init__(self, *args: Any, **kwargs: Any):
+        logger.info("initializing ExampleSource")
+        super().__init__(*args, client_version=client_version, **kwargs)
+
+    @metricq.rpc_handler("config")
+    async def _on_config(self, **config: Any) -> None:
+        logger.info("ExampleSource received config: {}", config)
+
+        # Set the update period
+        rate = config["rate"]
+        self.period = 1 / rate
+
+        # Supply some metadata for the metric declared below
+        metadata = {
+            "rate": rate,
+            "description": "A simple example metric providing random values, sent from a python ExampleSource",
+            "unit": "",  # unit-less metrics indicate this with an empty string
+        }
+        await self.declare_metrics({"python.example.quantity": metadata})
+
+    async def task(self) -> None:
+        # Send a random value at the current time:
+        await self.send(
+            "python.example.quantity",
+            time=metricq.Timestamp.now(),
+            value=random.random(),
+        )
